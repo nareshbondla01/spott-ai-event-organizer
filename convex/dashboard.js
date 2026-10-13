@@ -1,81 +1,202 @@
 import { internal } from "./_generated/api";
-import { mutation, query } from "./_generated/server";
+import { query } from "./_generated/server";
 import { v } from "convex/values";
 
-// Get event with detailed stats for dashboard
+/* -------------------------------------------------------------------------- */
+/* Get Event Dashboard                                                        */
+/* -------------------------------------------------------------------------- */
+
 export const getEventDashboard = query({
-  args: { eventId: v.id("events") },
-  handler: async (ctx, args) => {
-    const user = await ctx.runQuery(internal.users.getCurrentUser);
+    args: {
+        eventId: v.id("events"),
+    },
 
-    if (!user) {
-      throw new Error("User not found");
-    }
+    handler: async(ctx, args) => {
+        /* ---------------------------------------------------------------------- */
+        /* Authentication                                                         */
+        /* ---------------------------------------------------------------------- */
 
-    const event = await ctx.db.get(args.eventId);
-    if (!event) {
-      throw new Error("Event not found");
-    }
+        const user = await ctx.runQuery(
+            internal.users.getCurrentUser
+        );
 
-    // Check if user is the organizer
-    if (event.organizerId !== user._id) {
-      throw new Error("You are not authorized to view this dashboard");
-    }
+        if (!user) {
+            throw new Error("User not authenticated.");
+        }
 
-    // Get all registrations
-    const registrations = await ctx.db
-      .query("registrations")
-      .withIndex("by_event", (q) => q.eq("eventId", args.eventId))
-      .collect();
+        /* ---------------------------------------------------------------------- */
+        /* Get Event                                                              */
+        /* ---------------------------------------------------------------------- */
 
-    // Calculate stats
-    const totalRegistrations = registrations.filter(
-      (r) => r.status === "confirmed"
-    ).length;
-    const checkedInCount = registrations.filter(
-      (r) => r.checkedIn && r.status === "confirmed"
-    ).length;
-    const pendingCount = totalRegistrations - checkedInCount;
+        const event = await ctx.db.get(args.eventId);
 
-    // Calculate revenue for paid events
-    let totalRevenue = 0;
-    if (event.ticketType === "paid" && event.ticketPrice) {
-      totalRevenue = checkedInCount * event.ticketPrice;
-    }
+        if (!event) {
+            throw new Error("Event not found.");
+        }
 
-    // Calculate check-in rate
-    const checkInRate =
-      totalRegistrations > 0
-        ? Math.round((checkedInCount / totalRegistrations) * 100)
-        : 0;
+        /* ---------------------------------------------------------------------- */
+        /* Organizer Authorization                                                */
+        /* ---------------------------------------------------------------------- */
 
-    // Calculate time until event
-    const now = Date.now();
-    const timeUntilEvent = event.startDate - now;
-    const hoursUntilEvent = Math.max(
-      0,
-      Math.floor(timeUntilEvent / (1000 * 60 * 60))
-    );
+        if (event.organizerId !== user._id) {
+            throw new Error(
+                "You are not authorized to view this dashboard."
+            );
+        }
 
-    const today = new Date().setHours(0, 0, 0, 0);
-    const startDay = new Date(event.startDate).setHours(0, 0, 0, 0);
-    const endDay = new Date(event.endDate).setHours(0, 0, 0, 0);
-    const isEventToday = today >= startDay && today <= endDay;
-    const isEventPast = event.endDate < now;
+        /* ---------------------------------------------------------------------- */
+        /* Get Registrations                                                      */
+        /* ---------------------------------------------------------------------- */
 
-    return {
-      event,
-      stats: {
-        totalRegistrations,
-        checkedInCount,
-        pendingCount,
-        capacity: event.capacity,
-        checkInRate,
-        totalRevenue,
-        hoursUntilEvent,
-        isEventToday,
-        isEventPast,
-      },
-    };
-  },
+        const registrations = await ctx.db
+            .query("registrations")
+            .withIndex("by_event", (q) =>
+                q.eq("eventId", args.eventId)
+            )
+            .collect();
+
+        /* ---------------------------------------------------------------------- */
+        /* Registration Statistics                                                */
+        /* ---------------------------------------------------------------------- */
+
+        const confirmedRegistrations = registrations.filter(
+            (registration) =>
+            registration.status === "confirmed"
+        );
+
+        const totalRegistrations =
+            confirmedRegistrations.length;
+
+        const checkedInCount =
+            confirmedRegistrations.filter(
+                (registration) =>
+                registration.checkedIn === true
+            ).length;
+
+        const pendingCount =
+            totalRegistrations - checkedInCount;
+
+        /* ---------------------------------------------------------------------- */
+        /* Capacity                                                               */
+        /* ---------------------------------------------------------------------- */
+
+        const capacity = event.capacity;
+
+        const remainingCapacity = Math.max(
+            0,
+            capacity - totalRegistrations
+        );
+
+        const isFull =
+            totalRegistrations >= capacity;
+
+        /* ---------------------------------------------------------------------- */
+        /* Check-In Rate                                                          */
+        /* ---------------------------------------------------------------------- */
+
+        const checkInRate =
+            totalRegistrations > 0 ?
+            Math.round(
+                (checkedInCount /
+                    totalRegistrations) *
+                100
+            ) :
+            0;
+
+        /* ---------------------------------------------------------------------- */
+        /* Event Timing                                                           */
+        /* ---------------------------------------------------------------------- */
+
+        const now = Date.now();
+
+        const timeUntilEvent =
+            event.startDate - now;
+
+        const hoursUntilEvent = Math.max(
+            0,
+            Math.floor(
+                timeUntilEvent /
+                (1000 * 60 * 60)
+            )
+        );
+
+        /* ---------------------------------------------------------------------- */
+        /* Event Day Information                                                  */
+        /* ---------------------------------------------------------------------- */
+
+        const currentDate = new Date(now);
+        const startDate = new Date(event.startDate);
+        const endDate = new Date(event.endDate);
+
+        const today = new Date(
+            currentDate.getFullYear(),
+            currentDate.getMonth(),
+            currentDate.getDate()
+        ).getTime();
+
+        const startDay = new Date(
+            startDate.getFullYear(),
+            startDate.getMonth(),
+            startDate.getDate()
+        ).getTime();
+
+        const endDay = new Date(
+            endDate.getFullYear(),
+            endDate.getMonth(),
+            endDate.getDate()
+        ).getTime();
+
+        const isEventToday =
+            today >= startDay &&
+            today <= endDay;
+
+        const isEventPast =
+            event.endDate < now;
+
+        const isEventUpcoming =
+            event.startDate > now;
+
+        /* ---------------------------------------------------------------------- */
+        /* Event Status                                                           */
+        /* ---------------------------------------------------------------------- */
+
+        let eventStatus = "upcoming";
+
+        if (isEventPast) {
+            eventStatus = "past";
+        } else if (isEventToday) {
+            eventStatus = "today";
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* Return Dashboard Data                                                  */
+        /* ---------------------------------------------------------------------- */
+
+        return {
+            event,
+
+            stats: {
+                totalRegistrations,
+                checkedInCount,
+                pendingCount,
+
+                capacity,
+                remainingCapacity,
+                isFull,
+
+                checkInRate,
+
+                // All Spott events are free.
+                totalRevenue: 0,
+
+                hoursUntilEvent,
+
+                isEventToday,
+                isEventPast,
+                isEventUpcoming,
+
+                eventStatus,
+            },
+        };
+    },
 });

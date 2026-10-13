@@ -20,69 +20,144 @@ export default function AIEventCreator({ onEventGenerated }) {
   const [loading, setLoading] = useState(false);
 
   const generateEvent = async () => {
-    if (!prompt.trim()) {
-      toast.error("Please describe your event");
+    const trimmedPrompt = prompt.trim();
+
+    if (!trimmedPrompt) {
+      toast.error("Please describe your event.");
       return;
     }
 
     setLoading(true);
+
     try {
       const response = await fetch("/api/generate-event", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          prompt: trimmedPrompt,
+        }),
       });
 
-      const data = await response.json();
-      onEventGenerated(data);
-      toast.success("Event details generated! Review and customize below.");
+      let data;
+
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error("The AI service returned an invalid response.");
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+            data?.message ||
+            "Failed to generate event details."
+        );
+      }
+
+      if (!data || typeof data !== "object") {
+        throw new Error("Invalid event data received from AI.");
+      }
+
+      /*
+       * Only send the generated event data back to the
+       * Create Event page.
+       *
+       * Payment/ticket information is intentionally ignored
+       * by the Create Event page because all Spott events
+       * are free.
+       */
+      if (typeof onEventGenerated === "function") {
+        onEventGenerated(data);
+      }
+
+      toast.success(
+        "Event details generated! Review and customize them below."
+      );
+
       setIsOpen(false);
       setPrompt("");
     } catch (error) {
-      toast.error("Failed to generate event. Please try again.");
-      console.error(error);
+      console.error("AI event generation error:", error);
+
+      toast.error(
+        error?.message ||
+          "Failed to generate event. Please try again."
+      );
     } finally {
       setLoading(false);
     }
   };
 
+  const handleOpenChange = (open) => {
+    if (loading) {
+      return;
+    }
+
+    setIsOpen(open);
+
+    if (!open) {
+      setPrompt("");
+    }
+  };
+
   return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <Button variant="outline" className="gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          className="gap-2"
+        >
           <Sparkles className="w-4 h-4" />
           Generate with AI
         </Button>
       </DialogTrigger>
-      <DialogContent>
+
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-purple-500" />
             AI Event Creator
           </DialogTitle>
+
           <DialogDescription>
-            Describe your event idea and let AI create the details for you
+            Describe your event idea and AI will generate event
+            details for you. You can review and edit everything
+            before creating the event.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           <Textarea
             value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Example: A tech meetup about React 19 for developers in Bangalore. It should cover new features like Actions and use hook improvements..."
-            rows={6}
+            onChange={(event) => setPrompt(event.target.value)}
+            placeholder="Example: Create a technology meetup in Bangalore for 100 developers about React and modern web development."
+            rows={7}
             className="resize-none"
+            disabled={loading}
           />
+
+          <p className="text-xs text-muted-foreground">
+            Tip: Include the event type, topic, audience,
+            location, approximate capacity, and any important
+            requirements.
+          </p>
 
           <div className="flex gap-2">
             <Button
+              type="button"
               variant="outline"
-              onClick={() => setIsOpen(false)}
+              onClick={() => handleOpenChange(false)}
               className="flex-1"
+              disabled={loading}
             >
               Cancel
             </Button>
+
             <Button
+              type="button"
               onClick={generateEvent}
               disabled={loading || !prompt.trim()}
               className="flex-1 gap-2"

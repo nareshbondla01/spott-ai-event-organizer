@@ -1,107 +1,251 @@
-import { internal } from "./_generated/api";
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
-// ✅ Store or update user
+/* -------------------------------------------------------------------------- */
+/* Store / Update Current User                                                */
+/* -------------------------------------------------------------------------- */
+
 export const store = mutation({
     args: {},
+
     handler: async(ctx) => {
-        const identity = await ctx.auth.getUserIdentity();
+        const identity =
+            await ctx.auth.getUserIdentity();
 
         if (!identity) {
-            throw new Error("User not authenticated");
+            throw new Error(
+                "User not authenticated."
+            );
         }
 
-        // 🔥 Use clerkId (stable)
-        const clerkId = identity.subject;
+        const clerkId =
+            identity.subject;
+
+        if (!clerkId) {
+            throw new Error(
+                "Unable to identify authenticated user."
+            );
+        }
 
         const user = await ctx.db
             .query("users")
-            .withIndex("by_clerkId", (q) => q.eq("clerkId", clerkId))
+            .withIndex(
+                "by_clerkId",
+                (q) =>
+                q.eq(
+                    "clerkId",
+                    clerkId
+                )
+            )
             .unique();
 
+        /* ---------------------------------------------------------------------- */
+        /* Existing User                                                          */
+        /* ---------------------------------------------------------------------- */
+
         if (user) {
-            // Update if needed
             const updates = {};
 
-            if (user.name !== identity.name) {
-                updates.name = identity.name ?? "Anonymous";
+            const name =
+                identity.name ||
+                "Anonymous";
+
+            const email =
+                identity.email ||
+                "";
+
+            const imageUrl =
+                identity.pictureUrl ||
+                undefined;
+
+            if (user.name !== name) {
+                updates.name = name;
             }
 
-            if (user.email !== identity.email) {
-                updates.email = identity.email ?? "";
+            if (user.email !== email) {
+                updates.email = email;
             }
 
-            if (user.imageUrl !== identity.pictureUrl) {
-                updates.imageUrl = identity.pictureUrl;
+            if (
+                user.imageUrl !==
+                imageUrl
+            ) {
+                updates.imageUrl =
+                    imageUrl;
             }
 
-            if (Object.keys(updates).length > 0) {
-                updates.updatedAt = Date.now();
-                await ctx.db.patch(user._id, updates);
+            if (
+                user.tokenIdentifier !==
+                identity.tokenIdentifier
+            ) {
+                updates.tokenIdentifier =
+                    identity.tokenIdentifier;
+            }
+
+            if (
+                Object.keys(updates)
+                .length > 0
+            ) {
+                updates.updatedAt =
+                    Date.now();
+
+                await ctx.db.patch(
+                    user._id,
+                    updates
+                );
             }
 
             return user._id;
         }
 
-        // ✅ Create new user
-        return await ctx.db.insert("users", {
-            clerkId,
-            email: identity.email ?? "",
-            name: identity.name ?? "Anonymous",
-            imageUrl: identity.pictureUrl,
-            hasCompletedOnboarding: false,
-            freeEventsCreated: 0,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-        });
+        /* ---------------------------------------------------------------------- */
+        /* New User                                                               */
+        /* ---------------------------------------------------------------------- */
+
+        return await ctx.db.insert(
+            "users", {
+                clerkId,
+
+                email: identity.email || "",
+
+                name: identity.name ||
+                    "Anonymous",
+
+                imageUrl: identity.pictureUrl ||
+                    undefined,
+
+                tokenIdentifier: identity.tokenIdentifier ||
+                    undefined,
+
+                hasCompletedOnboarding: false,
+
+                /*
+                 * Legacy field.
+                 *
+                 * This is NOT used to limit
+                 * event creation.
+                 */
+                freeEventsCreated: 0,
+
+                createdAt: Date.now(),
+
+                updatedAt: Date.now(),
+            }
+        );
     },
 });
 
-// ✅ Get current user
+/* -------------------------------------------------------------------------- */
+/* Get Current User                                                           */
+/* -------------------------------------------------------------------------- */
+
 export const getCurrentUser = query({
+    args: {},
+
     handler: async(ctx) => {
-        const identity = await ctx.auth.getUserIdentity();
+        const identity =
+            await ctx.auth.getUserIdentity();
 
         if (!identity) {
             return null;
         }
 
-        const clerkId = identity.subject;
+        const clerkId =
+            identity.subject;
+
+        if (!clerkId) {
+            return null;
+        }
 
         const user = await ctx.db
             .query("users")
-            .withIndex("by_clerkId", (q) => q.eq("clerkId", clerkId))
+            .withIndex(
+                "by_clerkId",
+                (q) =>
+                q.eq(
+                    "clerkId",
+                    clerkId
+                )
+            )
             .unique();
 
-        if (!user) {
-            throw new Error("User not found");
-        }
-
-        return user;
+        return user || null;
     },
 });
 
-// ✅ Complete onboarding
-export const completeOnboarding = mutation({
-    args: {
-        location: v.object({
-            city: v.string(),
-            state: v.optional(v.string()),
-            country: v.string(),
-        }),
-        interests: v.array(v.string()),
-    },
-    handler: async(ctx, args) => {
-        const user = await ctx.runQuery(internal.users.getCurrentUser);
+/* -------------------------------------------------------------------------- */
+/* Complete Onboarding                                                        */
+/* -------------------------------------------------------------------------- */
 
-        await ctx.db.patch(user._id, {
-            location: args.location,
-            interests: args.interests,
-            hasCompletedOnboarding: true,
-            updatedAt: Date.now(),
-        });
+export const completeOnboarding =
+    mutation({
+        args: {
+            location: v.object({
+                city: v.string(),
+                state: v.optional(
+                    v.string()
+                ),
+                country: v.string(),
+            }),
 
-        return user._id;
-    },
-}); 
+            interests: v.array(
+                v.string()
+            ),
+        },
+
+        handler: async(
+            ctx,
+            args
+        ) => {
+            const identity =
+                await ctx.auth.getUserIdentity();
+
+            if (!identity) {
+                throw new Error(
+                    "User not authenticated."
+                );
+            }
+
+            const clerkId =
+                identity.subject;
+
+            if (!clerkId) {
+                throw new Error(
+                    "Unable to identify authenticated user."
+                );
+            }
+
+            const user =
+                await ctx.db
+                .query("users")
+                .withIndex(
+                    "by_clerkId",
+                    (q) =>
+                    q.eq(
+                        "clerkId",
+                        clerkId
+                    )
+                )
+                .unique();
+
+            if (!user) {
+                throw new Error(
+                    "User not found."
+                );
+            }
+
+            await ctx.db.patch(
+                user._id, {
+                    location: args.location,
+
+                    interests: args.interests,
+
+                    hasCompletedOnboarding: true,
+
+                    updatedAt: Date.now(),
+                }
+            );
+
+            return user._id;
+        },
+    });
